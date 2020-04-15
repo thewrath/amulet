@@ -36,47 +36,52 @@ if [[ "$TRAVIS_TAG" == *-distro-trigger ]]; then
 else
     if [ "$TRAVIS_OS_NAME" = "linux" ]; then
         # build linux
-        make -j2 TARGET=linux32.release LUAVM=lua51   test
-        make -j2 TARGET=linux32.release LUAVM=lua52   test
-        make -j2 TARGET=linux32.release LUAVM=luajit  test
-        make -j2 TARGET=linux64.release LUAVM=lua51   test
-        make -j2 TARGET=linux64.release LUAVM=lua52   test
-        make -j2 TARGET=linux64.release LUAVM=luajit  test
-        make -j2 TARGET=mingw32.release LUAVM=lua51
-        make -j2 TARGET=mingw32.release LUAVM=lua52
+        make -j2 STRICT=1 TARGET=linux32.release LUAVM=lua51   test
+        make -j2 STRICT=1 TARGET=linux32.release LUAVM=lua52   test
+        make -j2 STRICT=1 TARGET=linux32.release LUAVM=luajit  test
+        make -j2 STRICT=1 TARGET=linux64.release LUAVM=lua51   test
+        make -j2 STRICT=1 TARGET=linux64.release LUAVM=lua52   test
+        make -j2 STRICT=1 TARGET=linux64.release LUAVM=luajit  test
+        make -j2 STRICT=1 TARGET=mingw32.release LUAVM=lua51
+        make -j2 STRICT=1 TARGET=mingw32.release LUAVM=lua52
         scripts/gen_linux_universal.sh
 
         # build android
-        NDK=android-ndk-r14b
+        NDK=android-ndk-r20
         echo downloading $NDK...
         curl -s -L https://dl.google.com/android/repository/$NDK-linux-x86_64.zip -o android-ndk.zip
         echo unzipping $NDK...
         unzip android-ndk.zip > /dev/null
         export NDK_HOME=`pwd`/$NDK
         export NDK_HOST=linux-x86_64
-        export NDK_ANDROID_VER=16
-        make -j2 TARGET=android.release LUAVM=lua51
-        make -j2 TARGET=android.release LUAVM=lua52
+        make -j2 STRICT=1 TARGET=android_arm32.release LUAVM=lua51
+        make -j2 STRICT=1 TARGET=android_arm32.release LUAVM=lua52
+        make -j2 STRICT=1 TARGET=android_arm64.release LUAVM=lua51
+        make -j2 STRICT=1 TARGET=android_arm64.release LUAVM=lua52
+        make -j2 STRICT=1 TARGET=android_x86.release LUAVM=lua51
+        make -j2 STRICT=1 TARGET=android_x86.release LUAVM=lua52
+        make -j2 STRICT=1 TARGET=android_x86_64.release LUAVM=lua51
+        make -j2 STRICT=1 TARGET=android_x86_64.release LUAVM=lua52
     else
         # build osx
-        make -j2 TARGET=osx.release     LUAVM=lua51   test
-        make -j2 TARGET=osx.release     LUAVM=lua52   test
-        make -j2 TARGET=osx.release     LUAVM=luajit  test
+        make -j2 STRICT=1 TARGET=osx.release     LUAVM=lua51   test
+        make -j2 STRICT=1 TARGET=osx.release     LUAVM=lua52   test
+        make -j2 STRICT=1 TARGET=osx.release     LUAVM=luajit  test
 
         # build ios
-        make -j2 TARGET=ios.release     LUAVM=lua51
-        make -j2 TARGET=ios.release     LUAVM=lua52
+        make -j2 STRICT=1 TARGET=ios.release     LUAVM=lua51
+        make -j2 STRICT=1 TARGET=ios.release     LUAVM=lua52
 
         # build emscripten
         # (building on osx, because the pre-built llvm binaries don't work on linux due to incompatible glibc version)
-        EMSDK=latest
+        EMSDK=sdk-1.38.48-64bit
         git clone https://github.com/juj/emsdk.git emscripten
         cd emscripten
         ./emsdk install $EMSDK
         ./emsdk activate $EMSDK
         source ./emsdk_env.sh
         cd ..
-        make -j2 TARGET=html.release LUAVM=lua51
+        make -j2 STRICT=1 TARGET=html.release LUAVM=lua51
     fi
     if [ -n "$TRAVIS_TAG" ]; then
         scripts/upload_builds.js $TRAVIS_TAG

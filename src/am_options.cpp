@@ -17,7 +17,8 @@ struct option {
 static bool help_export() {
     printf(
        /*-------------------------------------------------------------------------------*/
-        "Usage: amulet export [-windows] [-mac] [-linux] [-html] [-ios-xcode-proj] [-datapak]\n"
+        "Usage: amulet export [-windows] [-windows64] [-mac] [-linux] [-html] \n"
+        "                     [-ios-xcode-proj] [-android-studio-proj] [-datapak]\n"
         "                     [-a] [-r] [-d <out-dir>] [-o <out-path>] [-nozipdir] [ <dir> ]\n"
         "\n"
         "  Exports distribution packages for the project in <dir>,\n"
@@ -75,7 +76,7 @@ static bool help_pack() {
        /*-------------------------------------------------------------------------------*/
         "Usage: amulet pack -png <filename.png> -lua <filename.lua> \n"
         "                   [-mono] [-minfilter <filter>] [-magfilter <filter>]\n"
-        "                   [-no-premult] [-keep-padding] <files> ...\n"
+        "                   [-no-premult] [-keep-padding] [-no-border] <files> ...\n"
         "\n"
         "  Packs images and/or fonts into a sprite sheet and generates a Lua\n"
         "  module for accessing the sprites therein.\n"
@@ -88,6 +89,7 @@ static bool help_pack() {
         "  -magfilter               nearest or linear (default is linear).\n"
         "  -no-premult              Do not pre-multiply RGB channels by alpha.\n"
         "  -keep-padding            Do not strip transparent pixels around images.\n"
+        "  -no-border               Do not add a transparent border around images.\n"
         "\n"
         "  <files> is a list of image files (.png or .jpg) and/or font files (.ttf).\n"
         "  Each font file must additionally have a suffix of the form @size which\n"
@@ -173,6 +175,8 @@ static bool export_cmd(int *argc, char ***argv) {
         char *arg = (*argv)[i];
         if (strcmp(arg, "-windows") == 0) {
             flags.export_windows = true;
+        } else if (strcmp(arg, "-windows64") == 0) {
+            flags.export_windows64 = true;
         } else if (strcmp(arg, "-mac") == 0) {
             flags.export_mac = true;
         } else if (strcmp(arg, "-mac-app-store") == 0) {
@@ -181,6 +185,8 @@ static bool export_cmd(int *argc, char ***argv) {
             flags.export_linux = true;
         } else if (strcmp(arg, "-ios-xcode-proj") == 0) {
             flags.export_ios_xcode_proj = true;
+        } else if (strcmp(arg, "-android-studio-proj") == 0) {
+            flags.export_android_studio_proj = true;
         } else if (strcmp(arg, "-html") == 0) {
             flags.export_html = true;
         } else if (strcmp(arg, "-datapak") == 0) {
@@ -207,6 +213,8 @@ static bool export_cmd(int *argc, char ***argv) {
             i++;
             arg = (*argv)[i];
             flags.outpath = arg;
+        } else if (strcmp(arg, "-debug") == 0) {
+            flags.debug = true;
         } else {
             break;
         }
@@ -229,7 +237,6 @@ static bool export_cmd(int *argc, char ***argv) {
     char last = dir[strlen(dir)-1];
     if (last == '/' || last == '\\') dir[strlen(dir)-1] = 0;
     am_opt_data_dir = dir;
-    am_debug("mac: %d", flags.export_mac_app_store);
     return am_build_exports(&flags);
 #else
     fprintf(stderr, "Sorry, the export command is not supported on this platform.\n");
@@ -273,12 +280,13 @@ static bool nocloselua_opt(int *argc, char ***argv) {
     return true;
 }
 
-#ifdef AM_WINDOWS
 static bool d3dangle_opt(int *argc, char ***argv) {
     am_conf_d3dangle = true;
+    #if !defined(AM_WINDOWS)
+        am_conf_d3dangle = false;
+    #endif
     return true;
 }
-#endif
 
 static option options[] = {
     {"help",        help_cmd, true},
@@ -293,9 +301,7 @@ static option options[] = {
     {"-lang",       lang_opt, false},
     {"-gllog",      gllog_opt, false},
     {"-nocloselua", nocloselua_opt, false},
-#ifdef AM_WINDOWS
     {"-d3dangle",   d3dangle_opt, false},
-#endif
 
     {NULL, NULL}
 };

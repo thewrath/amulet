@@ -38,6 +38,7 @@ struct controller_info {
     bool active;
     SDL_JoystickID joyid;
     SDL_Haptic *haptic;
+    SDL_GameController *controller;
 };
 
 #define MAX_CONTROLLERS 8
@@ -542,6 +543,18 @@ restart:
     }
     if (windows.size() == 0) goto quit;
 
+    if (restart_triggered) {
+        // re "attach" the controllers on the lua side after reloading the
+        // world.
+        for (int index = 0; index < MAX_CONTROLLERS; ++index) {
+            if (controller_infos[index].active) {
+                lua_pushinteger(L, index);
+                lua_pushinteger(L, controller_infos[index].joyid);
+                am_call_amulet(L, "_controller_attached", 2, 0);
+            }
+        }
+    }
+
     restart_triggered = false;
 
     t0 = am_get_current_time();
@@ -622,9 +635,9 @@ restart:
         t0 = frame_time;
 
         if (!have_focus) {
-#if defined(AM_OSX) && !defined(AM_USE_METAL)
-            // throttle framerate when in background on osx gl (otherwise cpu goes through the roof)
-            usleep(10 * 1000); // 10 milliseconds
+#if defined(AM_OSX)
+            // throttle framerate when in background on osx, otherwise cpu usage becomes very high for unknown reasons
+            usleep(50 * 1000); // 50 milliseconds
 #endif
         }
     }
@@ -1124,6 +1137,7 @@ static bool handle_events(lua_State *L) {
                         int joyid = SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(controller));
                         controller_infos[index].active = true;
                         controller_infos[index].joyid = joyid;
+                        controller_infos[index].controller = controller;
                         SDL_Joystick *joy = SDL_JoystickFromInstanceID(joyid);
                         if (joy != NULL) {
                             controller_infos[index].haptic = SDL_HapticOpenFromJoystick(joy);
@@ -1147,6 +1161,8 @@ static bool handle_events(lua_State *L) {
                             SDL_HapticClose(controller_infos[i].haptic);
                             controller_infos[i].haptic = NULL;
                         }
+                        SDL_GameControllerClose(controller_infos[i].controller);
+                        controller_infos[i].controller = NULL;
                         break;
                     }
                 }

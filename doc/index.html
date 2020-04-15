@@ -129,7 +129,7 @@ code > span.in { color: #60a0b0; font-weight: bold; font-style: italic; } /* Inf
 <li><a href="#view.buffer">view.buffer</a></li>
 </ul></li>
 <li><a href="#view-methods">View methods</a><ul>
-<li><a href="#view:slice">view:slice(n [, count])</a></li>
+<li><a href="#view:slice">view:slice(n [, count [, stride_multiplier]])</a></li>
 <li><a href="#view:set">view:set(val [, start [, count]])</a></li>
 <li><a href="#am.float_array">am.float_array(table)</a></li>
 <li><a href="#am.byte_array">am.byte_array(table)</a></li>
@@ -274,6 +274,7 @@ code > span.in { color: #60a0b0; font-weight: bold; font-style: italic; } /* Inf
 <li><a href="#am.viewport">am.viewport(left, bottom, width, height)</a></li>
 <li><a href="#am.lookat">am.lookat([uniform,] eye, center, up)</a></li>
 <li><a href="#am.cull_sphere">am.cull_sphere([uniforms...,] radius [, center])</a></li>
+<li><a href="#am.cull_box">am.cull_box([uniforms...,] min, max)</a></li>
 <li><a href="#am.billboard">am.billboard([uniform,] [preserve_scaling])</a></li>
 <li><a href="#am.read_param">am.read_uniform(uniform)</a></li>
 <li><a href="#am.quads">am.quads(n, spec [, usage])</a></li>
@@ -436,6 +437,7 @@ code > span.in { color: #60a0b0; font-weight: bold; font-style: italic; } /* Inf
 <li><a href="#windows-settings">Windows settings</a></li>
 <li><a href="#mac-settings">Mac settings</a></li>
 <li><a href="#ios-settings">iOS settings</a></li>
+<li><a href="#android-settings">Android settings</a></li>
 </ul></li>
 <li><a href="#d-models">3D models</a><ul>
 <li><a href="#am.load_obj">am.load_obj(filename)</a></li>
@@ -508,13 +510,13 @@ code > span.in { color: #60a0b0; font-weight: bold; font-style: italic; } /* Inf
 <p>It tries to be simple to use, but without making too many assumptions about how you want to use it.</p>
 <p>Amulet currently runs on the following platforms:</p>
 <ul>
-<li>Windows 7+ (32 bit)</li>
-<li>Mac OS X 10.6+ (64 bit)</li>
-<li>Linux (32 and 64 bit)</li>
-<li>HTML5</li>
-<li>iOS (armv7 and arm64)</li>
+<li>Windows 7+ (Intel 32 and 64 bit, Direct3D or OpenGL)</li>
+<li>Mac OS X 10.6+ (Intel 64 bit only, Metal)</li>
+<li>Linux (Intel 32 and 64 bit, OpenGL)</li>
+<li>HTML5 (WebAssembly, WebGL)</li>
+<li>iOS (ARM 64 bit only, Metal)</li>
+<li>Android (ARM 32 and 64 bit, OpenGLES)</li>
 </ul>
-<p>Support for Android will be added at some point as well.</p>
 <h1 id="how-to-use-this-document">How to use this document</h1>
 <p>If you have some programming experience, but are new to Lua then the <a href="#lua-primer">Lua primer</a> should bring you up to speed.</p>
 <p>The <a href="#quickstart">quickstart tutorial</a> introduces basic concepts and walks you through drawing things on screen, playing audio and responding to user input.</p>
@@ -1530,8 +1532,8 @@ view<span class="ot">[</span><span class="dv">2</span><span class="ot">]</span> 
 <p>The buffer associated with the view.</p>
 <p>Readonly.</p>
 <h2 id="view-methods">View methods</h2>
-<h3 id="view:slice" class="method-def">view:slice(n [, count])</h3>
-<p>Returns a new view of the same type as <code>view</code> that references the same buffer, but which starts at the <code>n</code>th element of <code>view</code> and continues for <code>count</code> elements. If <code>count</code> is omitted it is <code>#view - n + 1</code> (i.e. it covers all the elements of <code>view</code> after and including the <code>n</code>th).</p>
+<h3 id="view:slice" class="method-def">view:slice(n [, count [, stride_multiplier]])</h3>
+<p>Returns a new view with the same type as <code>view</code> that references the same buffer, but which starts at the <code>n</code>th element of <code>view</code> and continues for <code>count</code> elements. If <code>count</code> is omitted or nil it covers all the elements of <code>view</code> after and including the <code>n</code>th. <code>stride_multiplier</code> can be used to increase the stride of the view and thereby skip elements. It must be a positive integer and defaults to 1 (no skipping).</p>
 <h3 id="view:set" class="method-def">view:set(val [, start [, count]])</h3>
 <p>Bulk sets values in a view. This is faster than setting them one at a time.</p>
 <p>If <code>val</code> is a number or vector then this sets all elements of <code>view</code> to <code>val</code>.</p>
@@ -1599,7 +1601,7 @@ arr<span class="ot">.</span>color:set<span class="ot">(</span>vec4<span class="o
 <p>Creates a new window and returns a handle to it. <code>settings</code> is a table with any of the following fields:</p>
 <ul>
 <li><p><strong><code>mode</code></strong>: Either <code>&quot;windowed&quot;</code> or <code>&quot;fullscreen&quot;</code>. A fullscreen window will have the same resolution as the user's desktop. The default is <code>&quot;windowed&quot;</code>. Not all platforms support windowed mode (e.g. iOS). On these platforms this setting is ignored.</p></li>
-<li><p><strong><code>width</code></strong> and <strong><code>height</code></strong>: These define the window's <em>default coordinate system</em>. If letterboxing is enabled then this is (<code>-width/2</code>, <code>-height/2</code>) in the bottom-left corner and (<code>width/2</code>, <code>height/2</code>) in the top-right corner. If letterboxing is disabled, then the coordinate system will extend in the horizontal or vertical directions to ensure an area of at least <code>width</code>×<code>height</code> is visible in the center of the window. In either case the centre coordinate will always be (0, 0). The default size is 640×480. Mouse and touch positions as well as rendering will be in this coordinate system unless a custom projection matrix is defined (see below). These also define the physical size of the window in windowed mode, unless the <code>size</code> property is given (see below).</p></li>
+<li><p><strong><code>width</code></strong> and <strong><code>height</code></strong>: These define the window's <em>default coordinate system</em>. If letterboxing is enabled then this is (<code>-width/2</code>, <code>-height/2</code>) in the bottom-left corner and (<code>width/2</code>, <code>height/2</code>) in the top-right corner. If letterboxing is disabled, then the coordinate system will extend in the horizontal or vertical directions to ensure an area of at least <code>width</code>×<code>height</code> is visible in the center of the window. In either case the centre coordinate will always be (0, 0). The default size is 640×480. Mouse and touch positions as well as rendering will be in this coordinate system unless a custom projection matrix is defined (see below). These also define the physical size of the window in windowed mode, unless the <code>physical_size</code> property is given (see below).</p></li>
 <li><p><strong><code>physical_size</code></strong>: The initial physical size of the window in windowed mode (a <code>vec2</code>). This is in &quot;screen units&quot; which usually correspond to pixels, but not always. For example on a retina Mac display where <code>highdpi</code> is enabled there are 2 pixels per screen unit. If this property is omitted then the <code>width</code> and <code>height</code> properties will be used for the physical window size. Note that this property has no effect on the coordinate system used by the window. Note also that this property only has an effect where the platform supports different sized windows. E.g. on iOS windows always fill the screen, so this property is ignored.</p></li>
 <li><p><strong><code>title</code></strong>: The window title.</p></li>
 <li><p><strong><code>resizable</code></strong>: Whether the window can be resized by the user (<code>true</code> or <code>false</code>, default <code>true</code>).</p></li>
@@ -2548,6 +2550,15 @@ win<span class="ot">.</span>scene <span class="ot">=</span>
 <li><code>center</code>: Updatable.</li>
 </ul>
 <p>Default tag: <code>&quot;cull_sphere&quot;</code>.</p>
+<h3 id="am.cull_box" class="func-def">am.cull_box([uniforms...,] min, max)</h3>
+<p>This first takes the matrix product of the given uniforms (which should be <code>mat4</code>s). Then it determines whether the box with the min and max coordinates (<code>min</code> and <code>max</code> are <code>vec3</code>s) would be visible using the computed matrix product as the model-view-projection matrix. If it wouldn't be visible then none of this node's children are rendered.</p>
+<p>The default value for <code>uniforms</code> is <code>&quot;P&quot; and &quot;MV&quot;</code>.</p>
+<p>Fields:</p>
+<ul>
+<li><code>min</code>: Updatable.</li>
+<li><code>max</code>: Updatable.</li>
+</ul>
+<p>Default tag: <code>&quot;cull_box&quot;</code>.</p>
 <h3 id="am.billboard" class="func-def">am.billboard([uniform,] [preserve_scaling])</h3>
 <p>Removes rotation from <code>uniform</code>, which should be a <code>mat4</code>. By default <code>uniform</code> is <code>&quot;MV&quot;</code>.</p>
 <p>If <code>preserve_scaling</code> is <code>false</code> or omitted then any scaling will also be removed from the matrix. If it is <code>true</code>, then scaling will be preserved, as long as it's the same across all three axes.</p>
@@ -2578,6 +2589,7 @@ win<span class="ot">.</span>scene <span class="ot">=</span>
 <li>a view containing the values for the elements As with the <a href="#view:set"><code>view:set</code></a> method, if the attribute is a vector, a table of numbers is also accepted. The quad number (starting at 1) is returned.</li>
 </ul></li>
 <li><code>remove_quad(n [,count])</code>: Removes <code>count</code> quads starting with the <code>n</code>th. <code>count</code> is 1 if omitted.</li>
+<li><code>clear()</code>: Removes all quads.</li>
 <li>Additionally methods are created for each attribute of the form <code>quad_&lt;attribute name&gt;</code> that can be used to update the value of a quad attribute. The signature of the method is: <code>quad_attr(n, values)</code> where <code>n</code> is the quad number and <code>values</code> has the same meaning as in the <code>add_quad</code> method.</li>
 </ul>
 <p>Default tag: <code>&quot;quads&quot;</code>.</p>
@@ -3281,7 +3293,7 @@ ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz</code></pre>
 <p>To generate distribution packages, use the amulet export command like so:</p>
 <pre class="console"><code>&gt; amulet export [&lt;dir&gt;]</code></pre>
 <p><code>&lt;dir&gt;</code> is the directory containing your <code>main.lua</code> file and optional <code>conf.lua</code> file (see <a href="#config">below</a>). It defaults to the current directory.</p>
-<p>This will generate zip package files for Windows, Mac and Linux in the current directory. Alternatively you can pass one of the options <code>-windows</code>, <code>-mac</code>, <code>-linux</code>, <code>-html</code> or <code>-ios-xcode-proj</code>, to generate packages for a specific platform.</p>
+<p>This will generate zip package files for Windows, Mac and Linux in the current directory. Alternatively you can pass one of the options <code>-windows</code>, <code>-mac</code>, <code>-linux</code>, <code>-html</code>, <code>-ios-xcode-proj</code> or <code>-android-studio-proj</code>, to generate packages for a specific platform.</p>
 <p>If the <code>-r</code> option is given then all subdirectories will also be included (recursively), otherwise only the files in the given directory are included.</p>
 <p>By default all files in the directory with the following extensions will be included in the export: <code>.lua</code>, <code>.json</code>, <code>.png</code>, <code>.jpg</code>, <code>.ogg</code>, <code>.obj</code>, <code>.vert</code>, <code>.frag</code>. You can include all files with the <code>-a</code> option.</p>
 <p>All .txt files will also be copied to the generated zip and be visible to the user when they unzip it. This is intended for <code>README.txt</code> or similar files.</p>
@@ -3294,7 +3306,7 @@ ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz</code></pre>
 <p>As a courtesy to the user, the generate zip packages will contain the game files in a sub-folder. If you instead want the game files to appear in the root of the zip, use -nozipdir. You might want this if the game will run from a launcher such as Steam.</p>
 <p>If you want to generate only the <code>data.pak</code> file for your project you can specify the <code>-datapak</code> option. It behaves in a similar way to the platform options, but generates a platform agnostic <code>data.pak</code> file containing your projects Lua files and other assets. You might want to do this to update a previously generated xcode project without regenerating all the project files.</p>
 <p>The generated zip will also contain an <code>amulet_license.txt</code> file containing the Amulet license as well as the licenses of all third party libraries used by Amulet. Some of these licenses require that they be distributed with copies of their libraries, so to comply you should include amulet_license.txt when you distribute your work. Note that these licenses do not apply to your work itself.</p>
-<p><strong>IMPORTANT</strong>: Avoid unzipping and re-zipping the generated packages as you may inadvertently strip the executable bit from some files, which will cause them not to work on some platforms.</p>
+<p><strong>IMPORTANT</strong>: Avoid unzipping and re-zipping the generated packages as you may inadvertently strip the executable marker from some files, which will cause them not to work on some platforms.</p>
 <h1 id="config">Project Configuration</h1>
 <p>Project metadata can be specified in a <code>conf.lua</code> file in the same directory as <code>main.lua</code>. Information like the icon to use for Mac and iOS exports, your game title, author and version, as well as app signing information for iOS is all specified here.</p>
 <h2 id="basic-metadata">Basic metadata</h2>
@@ -3326,13 +3338,28 @@ appid_ios <span class="ot">=</span> <span class="st">&quot;com.example.mygameid&
 icon_ios_ <span class="ot">=</span> <span class="st">&quot;assets/icon.png&quot;</span>
 launch_image <span class="ot">=</span> <span class="st">&quot;assets/launch_image.png&quot;</span>
 orientation <span class="ot">=</span> <span class="st">&quot;portrait&quot;</span>
-ios_cert_identity <span class="ot">=</span> <span class="st">&quot;XXXX123456&quot;</span>
+ios_dev_cert_identity <span class="ot">=</span> <span class="st">&quot;XXXX123456&quot;</span>
+ios_appstore_cert_identity <span class="ot">=</span> <span class="st">&quot;XXXX123456&quot;</span>
+ios_code_sign_identity <span class="ot">=</span> <span class="st">&quot;Apple Distribution&quot;</span>
 ios_dev_prov_profile_name <span class="ot">=</span> <span class="st">&quot;MyGame Dev Profile&quot;</span>
-ios_dist_prov_profile_name <span class="ot">=</span> <span class="st">&quot;MyGame App Store Profile&quot;</span></code></pre></div>
+ios_dist_prov_profile_name <span class="ot">=</span> <span class="st">&quot;MyGame App Store Profile&quot;</span>
+game_center_enabled <span class="ot">=</span> <span class="kw">true</span>
+icloud_enabled <span class="ot">=</span> <span class="kw">true</span></code></pre></div>
 <p>The above metadata is used when the <code>-ios-xcode-proj</code> export option is given to generate an Xcode project for iOS. All the data is required.</p>
 <p><code>orientation</code> can be <code>&quot;portrait&quot;</code>, <code>&quot;landscape&quot;</code>, <code>&quot;any&quot;</code> or <code>&quot;hybrid&quot;</code> (portrait on iPhone, but landscape on iPad).</p>
-<p><code>ios_cert_identity</code> is the code that appears in parenthesis in your certificate name (e.g. if you certificate name in Key Access is &quot;iPhone Distribution: Your Name (XXXX123456)&quot;, then this value should be <code>&quot;XXXX123456&quot;</code>.</p>
+<p><code>ios_dev_cert_identity</code> and <code>ios_appstore_cert_identity</code> is the code that appears in parenthesis in your certificate name (e.g. if you certificate name in Key Access is &quot;iPhone Distribution: Your Name (XXXX123456)&quot;, then this value should be <code>&quot;XXXX123456&quot;</code>.</p>
+<p><code>ios_code_sign_identity</code> is the part that comes before the colon in your distribution certificate name. Typically this is either <code>&quot;iPhone Distribution&quot;</code> or <code>&quot;Apple Distribution&quot;</code>. (Use the Keychain Access application in Utilities to view your certificates.)</p>
 <p><code>ios_dev_prov_profile_name</code> and <code>ios_dist_prov_profile_name</code> are the names of your installed development and distribution provisioning profiles respectively. You can install a provisioning profile by downloading and double clicking it.</p>
+<h2 id="android-settings">Android settings</h2>
+<div class="sourceCode"><pre class="sourceCode lua"><code class="sourceCode lua">display_name <span class="ot">=</span> <span class="st">&quot;My Game&quot;</span>
+appid_android <span class="ot">=</span> <span class="st">&quot;com.example.mygameid&quot;</span>
+icon_android <span class="ot">=</span> <span class="st">&quot;assets/icon.png&quot;</span>
+orientation <span class="ot">=</span> <span class="st">&quot;portrait&quot;</span>
+android_app_version_code <span class="ot">=</span> <span class="st">&quot;4&quot;</span>
+google_play_services_id <span class="ot">=</span> <span class="st">&quot;58675281521&quot;</span></code></pre></div>
+<p>The above metadata is used when the <code>-android-studio-proj</code> export option is given to generate an Android Studio project. All the data, except <code>google_play_services_id</code> is required (<code>google_play_services_id</code> is only required if you want to use Google Play leaderboards or achievements).</p>
+<p><code>orientation</code> can be <code>&quot;portrait&quot;</code>, <code>&quot;landscape&quot;</code> or <code>&quot;any&quot;</code>.</p>
+<p><code>appid_android</code> is used for the Java package name of the app. It should not contain dashes.</p>
 <h1 id="d-models">3D models</h1>
 <p>Amulet has some basic support for loading 3D models in Wavefront <code>.obj</code> format.</p>
 <h3 id="am.load_obj" class="func-def">am.load_obj(filename)</h3>

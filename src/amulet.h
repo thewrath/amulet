@@ -13,6 +13,9 @@
 #if defined(AM_IOS32) || defined(AM_IOS64) || defined(AM_IOSSIM)
     #define AM_IOS
 #endif
+#if defined(AM_ANDROID_ARM32) || defined(AM_ANDROID_ARM64) || defined(AM_ANDROID_X86) || defined(AM_ANDROID_X86_64)
+    #define AM_ANDROID
+#endif
 #if defined(AM_WINDOWS) || defined(AM_OSX) || defined(AM_LINUX)
     #define AM_BACKEND_SDL
 #elif defined(AM_IOS)
@@ -60,6 +63,7 @@
 #include <unistd.h>
 #endif
 
+#include <errno.h>
 #include <assert.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -132,8 +136,11 @@ extern "C" {
 #include "am_lua_util.h"
 #include "am_math.h"
 #include "am_buffer.h"
+#include "am_mathv.h"
+#include "am_view.h"
 #include "am_image.h"
 #include "am_texture2d.h"
+#include "am_vbo.h"
 #include "am_audio.h"
 #include "am_action.h"
 #include "am_scene.h"

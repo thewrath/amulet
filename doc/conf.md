@@ -75,9 +75,13 @@ appid_ios = "com.example.mygameid"
 icon_ios_ = "assets/icon.png"
 launch_image = "assets/launch_image.png"
 orientation = "portrait"
-ios_cert_identity = "XXXX123456"
+ios_dev_cert_identity = "XXXX123456"
+ios_appstore_cert_identity = "XXXX123456"
+ios_code_sign_identity = "Apple Distribution"
 ios_dev_prov_profile_name = "MyGame Dev Profile"
 ios_dist_prov_profile_name = "MyGame App Store Profile"
+game_center_enabled = true
+icloud_enabled = true
 ~~~
 
 The above metadata is used when the `-ios-xcode-proj` export option is
@@ -86,10 +90,34 @@ given to generate an Xcode project for iOS. All the data is required.
 `orientation` can be `"portrait"`, `"landscape"`, `"any"` or 
 `"hybrid"` (portrait on iPhone, but landscape on iPad).
 
-`ios_cert_identity` is the code that appears in parenthesis in your certificate name
+`ios_dev_cert_identity` and `ios_appstore_cert_identity` is the code that appears in parenthesis in your certificate name
 (e.g. if you certificate name in Key Access is "iPhone Distribution: Your Name (XXXX123456)",
 then this value should be `"XXXX123456"`.
+
+`ios_code_sign_identity` is the part that comes before the colon in your distribution certificate
+name. Typically this is either `"iPhone Distribution"` or `"Apple Distribution"`. (Use the Keychain Access application in
+Utilities to view your certificates.)
 
 `ios_dev_prov_profile_name` and `ios_dist_prov_profile_name` are the names
 of your installed development and distribution provisioning profiles respectively.
 You can install a provisioning profile by downloading and double clicking it.
+
+## Android settings
+
+~~~ {.lua}
+display_name = "My Game"
+appid_android = "com.example.mygameid"
+icon_android = "assets/icon.png"
+orientation = "portrait"
+android_app_version_code = "4"
+google_play_services_id = "58675281521"
+~~~
+
+The above metadata is used when the `-android-studio-proj` export option is
+given to generate an Android Studio project. All the data, except `google_play_services_id` is
+required (`google_play_services_id` is only required if you want to use Google
+Play leaderboards or achievements).
+
+`orientation` can be `"portrait"`, `"landscape"` or `"any"`.
+
+`appid_android` is used for the Java package name of the app. It should not contain dashes.

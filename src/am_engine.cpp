@@ -9,24 +9,22 @@ static void set_arg_global(lua_State *L, int argc, char** argv);
 static void am_set_version(lua_State *L);
 static void am_set_dirs(lua_State *L);
 static void am_set_platform(lua_State *L);
+static void am_set_platform_ptrsize(lua_State *L);
 static void am_set_support_email(lua_State *L);
 
 am_engine *am_init_engine(bool worker, int argc, char** argv) {
-#if defined(AM_LUAJIT)
-    // luajit implements its own allocator which is probably
-    // better than ours. In any case on 64 bit luajit does not
-    // allow using a custom allocator.
-    lua_State *L = luaL_newstate();
-    if (L == NULL) return NULL;
-    am_allocator *allocator = NULL;
-#else
     am_allocator *allocator = am_new_allocator();
+#if defined(AM_LUAJIT) && defined(AM_64BIT)
+    // luajit doesn't allow custom allocators on 64 bit systems
+    lua_State *L = luaL_newstate();
+#else
     lua_State *L = lua_newstate(&am_alloc, allocator);
+#endif
     if (L == NULL) {
+        fprintf(stderr, "unable to initialize lua engine\n");
         am_destroy_allocator(allocator);
         return NULL;
     }
-#endif
     am_engine *eng = new am_engine();
     eng->allocator = allocator;
     eng->L = L;
@@ -42,6 +40,8 @@ am_engine *am_init_engine(bool worker, int argc, char** argv) {
     am_open_math_module(L);
     am_open_time_module(L);
     am_open_buffer_module(L);
+    am_open_view_module(L);
+    am_open_mathv_module(L);
     am_open_json_module(L);
     am_open_utf8_module(L);
     am_open_http_module(L);
@@ -56,6 +56,7 @@ am_engine *am_init_engine(bool worker, int argc, char** argv) {
         am_open_scene_module(L);
         am_open_program_module(L);
         am_open_texture2d_module(L);
+        am_open_vbo_module(L);
         am_open_framebuffer_module(L);
         am_open_image_module(L);
         am_open_model_module(L);
@@ -81,6 +82,7 @@ am_engine *am_init_engine(bool worker, int argc, char** argv) {
     am_set_version(L);
     am_set_dirs(L);
     am_set_platform(L);
+    am_set_platform_ptrsize(L);
     am_set_support_email(L);
     if (!run_embedded_scripts(L, worker)) {
         lua_close(L);
@@ -228,6 +230,13 @@ static void am_set_platform(lua_State *L) {
 #error unknown platform
 #endif
     lua_setfield(L, -2, "platform");
+    lua_pop(L, 1); // am table
+}
+
+static void am_set_platform_ptrsize(lua_State *L) {
+    lua_getglobal(L, AMULET_LUA_MODULE_NAME);
+    lua_pushinteger(L, sizeof(void*));
+    lua_setfield(L, -2, "platform_ptrsize");
     lua_pop(L, 1); // am table
 }
 

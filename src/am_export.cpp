@@ -50,6 +50,11 @@ static char* get_ios_xcodeproj_lang_list(export_config *conf);
 static char* get_ios_launchscreen_entries(export_config *conf);
 static char* get_ios_launchscreen_children(export_config *conf);
 
+static bool create_android_proj_icon_files(const char *dir, export_config *conf);
+static bool create_android_proj_lang_dirs(const char *dir, export_config *conf);
+
+static char *get_bin_path(export_config *conf, const char *platform);
+
 static void replace_backslashes(char *str) {
     for (unsigned int i = 0; i < strlen(str); i++) {
         if (str[i] == '\\') str[i] = '/';
@@ -103,6 +108,18 @@ static bool copy_bin_file(const char *from_path, const char *to_path) {
     bool result = am_write_bin_file(to_path, data, len);
     free(data);
     return result;
+}
+
+static bool copy_platform_bin_file(char *dir, export_config *conf, const char *file, const char *platform) {
+    char *binpath = get_bin_path(conf, platform);
+    if (binpath == NULL) return false;
+    char *srcpath = am_format("%s/%s", binpath, file);
+    char *destpath = am_format("%s/%s", dir, file);
+    bool ok = copy_bin_file(srcpath, destpath);
+    free(binpath);
+    free(srcpath);
+    free(destpath);
+    return ok;
 }
 
 static bool add_files_to_pak(const char *zipfile, const char *rootdir, const char *dir, const char *pat, uint8_t platform) {
@@ -224,6 +241,73 @@ static bool build_data_pak(export_config *conf) {
     return build_data_pak_2(conf, 0, am_opt_data_dir, am_opt_data_dir, conf->pakfile);
 }
 
+static bool copy_files_to_dir(const char *rootdir, const char *dest_dir, const char *src_dir, const char *pat) {
+    CSimpleGlobTempl<char> glob(SG_GLOB_ONLYFILE);
+    char *pattern = am_format("%s%c%s", src_dir, AM_PATH_SEP, pat);
+    glob.Add(pattern);
+    free(pattern);
+    for (int n = 0; n < glob.FileCount(); ++n) {
+        char *file = glob.File(n);
+        char *name = file + strlen(rootdir) + 1;
+        char *dest_path = am_format("%s/%s", dest_dir, name);
+        bool ok = copy_bin_file(file, dest_path);
+        free(dest_path);
+        if (!ok) return false;
+        printf("Added %s\n", name);
+    }
+    return true;
+}
+
+
+static bool copy_data_files_to_dir(export_config *conf, const char *dest_dir, const char *rootdir, const char *src_dir) {
+    if (strlen(rootdir) < strlen(src_dir)) {
+        char *dest_subdir = am_format("%s/%s", dest_dir, src_dir + strlen(rootdir) + 1);
+        am_make_dir(dest_subdir);
+        free(dest_subdir);
+    }
+    if (conf->allfiles) {
+        return copy_files_to_dir(rootdir, dest_dir, src_dir, "*");
+    } else {
+        return
+            copy_files_to_dir(rootdir, dest_dir, src_dir, "*.lua") &&
+            copy_files_to_dir(rootdir, dest_dir, src_dir, "*.png") &&
+            copy_files_to_dir(rootdir, dest_dir, src_dir, "*.jpg") &&
+            copy_files_to_dir(rootdir, dest_dir, src_dir, "*.ogg") &&
+            copy_files_to_dir(rootdir, dest_dir, src_dir, "*.obj") &&
+            copy_files_to_dir(rootdir, dest_dir, src_dir, "*.json") &&
+            copy_files_to_dir(rootdir, dest_dir, src_dir, "*.frag") &&
+            copy_files_to_dir(rootdir, dest_dir, src_dir, "*.vert") &&
+            true;
+    }
+}
+
+static bool copy_data_files_2(export_config *conf, int level, const char *rootdir, const char *src_dir, const char *dest_dir) {
+    if (level >= RECURSE_LIMIT) {
+        fprintf(stderr, "Error: maximum directory recursion depth reached (%d)\n", RECURSE_LIMIT);
+        return false;
+    }
+    if (!copy_data_files_to_dir(conf, dest_dir, rootdir, src_dir)) {
+        return false;
+    }
+    if (conf->recurse) {
+        CSimpleGlobTempl<char> glob(SG_GLOB_ONLYDIR | SG_GLOB_NODOT);
+        char *pattern = am_format("%s%c*", src_dir, AM_PATH_SEP);
+        glob.Add(pattern);
+        free(pattern);
+        for (int n = 0; n < glob.FileCount(); ++n) {
+            char *src_subdir = glob.File(n);
+            if (!copy_data_files_2(conf, level + 1, rootdir, src_subdir, dest_dir)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+static bool copy_data_files(export_config *conf, const char *dir) {
+    return copy_data_files_2(conf, 0, am_opt_data_dir, am_opt_data_dir, dir);
+}
+
 static const char *platform_luavm(const char *platform) {
     if (am_conf_luavm != NULL) return am_conf_luavm;
     if (strcmp(platform, "msvc32") == 0) return "luajit";
@@ -277,10 +361,10 @@ static char *get_export_zip_name(export_config *conf, const char *platname) {
     }
 }
 
-static bool gen_windows_export(export_config *conf) {
-    char *zipname = get_export_zip_name(conf, "windows");
+static bool gen_windows_export(export_config *conf, const char *zipsuffix, const char *platform) {
+    char *zipname = get_export_zip_name(conf, zipsuffix);
     if (am_file_exists(zipname)) am_delete_file(zipname);
-    char *binpath = get_bin_path(conf, "msvc32");
+    char *binpath = get_bin_path(conf, platform);
     if (binpath == NULL) return true;
     const char *name = conf->shortname;
     const char *zipdir = conf->zipdir;
@@ -394,11 +478,26 @@ static bool copy_ios_xcodeproj_file(export_config *conf, char *dir) {
     char *launchscreen_children = get_ios_launchscreen_children(conf);
     const char *luavm = platform_luavm("ios");
     char *launch_img_name = am_format("launchimg_%u.png", conf->launch_image_id);
+    char *capabilities = am_format(
+        "{\n"
+        "    com.apple.GameCenter = {\n"
+        "            enabled = %d;\n"
+        "    };\n"
+        "    com.apple.GameCenter.iOS = {\n"
+        "            enabled = %d;\n"
+        "    };\n"
+        "    com.apple.iCloud = {\n"
+        "            enabled = %d;\n"
+        "    };\n"
+        "}\n",
+        am_conf_game_center_enabled ? 1 : 0, am_conf_game_center_enabled ? 1 : 0, am_conf_icloud_enabled ? 1 : 0);
     const char *subs[] = {
         "AM_APPNAME", conf->shortname,
         "AM_APPID", am_conf_app_id_ios,
         "AM_AUTHOR", am_conf_app_author,
-        "AM_CERT_ID", am_conf_ios_cert_identity,
+        "AM_DEV_CERT_ID", am_conf_ios_dev_cert_identity,
+        "AM_APPSTORE_CERT_ID", am_conf_ios_appstore_cert_identity,
+        "AM_CODE_SIGN_IDENTITY", am_conf_ios_code_sign_identity,
         "AM_DEV_PROV_PROFILE_NAME", am_conf_ios_dev_prov_profile_name,
         "AM_DIST_PROV_PROFILE_NAME", am_conf_ios_dist_prov_profile_name,
         "AM_LANG_LIST", lang_list,
@@ -407,6 +506,7 @@ static bool copy_ios_xcodeproj_file(export_config *conf, char *dir) {
         "AM_LAUNCHSCREEN_STORYBOARD_CHILDREN", launchscreen_children,
         "AM_LUAVM", luavm,
         "AM_LAUNCH_IMG", launch_img_name,
+        "AM_SYSTEM_CAPABILITIES", capabilities,
         NULL
     };
     bool ok = copy_text_file(src_path, dest_path, (char**)subs);
@@ -416,6 +516,8 @@ static bool copy_ios_xcodeproj_file(export_config *conf, char *dir) {
     free(lang_list);
     free(launchscreen_entries);
     free(launchscreen_children);
+    free(launch_img_name);
+    free(capabilities);
     return ok;
 }
 
@@ -486,6 +588,27 @@ static bool copy_ios_xcode_info_plist(export_config *conf, char *dir) {
         "AM_APPDISPLAYNAME", conf->display_name,
         "AM_APPVERSION", conf->version,
         "AM_APPORIENTATIONS", orientation_xml,
+        NULL,
+    };
+    bool ok = copy_text_file(src_path, dest_path, (char**)subs);
+    free(template_dir);
+    free(src_path);
+    free(dest_path);
+    return ok;
+}
+
+static bool copy_ios_entitlements(export_config *conf, char *dir) {
+    char *template_dir = get_template_path(conf);
+    if (template_dir == NULL) return false;
+    char *src_path = am_format("%sios/app.entitlements", template_dir);
+    char *dest_path = am_format("%s/%s.entitlements", dir, conf->shortname);
+    const char *icloud_xml = am_conf_icloud_enabled ? 
+       "    <key>com.apple.developer.icloud-container-identifiers</key>\n"
+       "    <array/>\n"
+       "    <key>com.apple.developer.ubiquity-kvstore-identifier</key>\n"
+       "    <string>$(TeamIdentifierPrefix)$(CFBundleIdentifier)</string>\n" : "";
+    const char *subs[] = {
+        "AM_ICLOUD_ENTITLEMENT", icloud_xml,
         NULL,
     };
     bool ok = copy_text_file(src_path, dest_path, (char**)subs);
@@ -567,6 +690,7 @@ static bool copy_ios_launchscreen_storyboard(char *projbase_dir, export_config *
     char *launch_img_dest_path = am_format("%s/%s", projbase_dir, launch_img_name);
 
     char *templates_dir = get_template_path(conf);
+    if (templates_dir == NULL) return false;
     char *storyboard_src_path = am_format("%sios/LaunchScreen.storyboard", templates_dir);
     char *base_lproj_dir = am_format("%s/Base.lproj", projbase_dir);
     char *storyboard_dest_path = am_format("%s/LaunchScreen.storyboard", base_lproj_dir);
@@ -640,6 +764,7 @@ static bool gen_ios_xcode_proj(export_config *conf) {
         return false;
     }
     char *templates_dir = get_template_path(conf);
+    if (templates_dir == NULL) return false;
     char *projbase_dir;
     if (conf->outpath) {
         projbase_dir = am_format("%s", conf->outpath);
@@ -651,8 +776,6 @@ static bool gen_ios_xcode_proj(export_config *conf) {
     char *appicon_assets_dir = am_format("%s/AppIcon.appiconset", assets_dir);
     char *appicon_contents_src_path = am_format("%sios/AppIconContents.json", templates_dir);
     char *appicon_contents_dest_path = am_format("%s/Contents.json", appicon_assets_dir);
-    char *entitlements_src_path = am_format("%sios/app.entitlements", templates_dir);
-    char *entitlements_dest_path = am_format("%s/%s.entitlements", projbase_dir, conf->shortname);
     const char *lua_a_file = am_format("%s.a", platform_luavm("ios"));
     am_make_dir(projbase_dir);
     am_make_dir(xcodeproj_dir);
@@ -661,10 +784,10 @@ static bool gen_ios_xcode_proj(export_config *conf) {
     bool ok =
         copy_ios_xcodeproj_file(conf, xcodeproj_dir) &&
         copy_ios_xcode_info_plist(conf, projbase_dir) &&
+        copy_ios_entitlements(conf, projbase_dir) &&
         create_ios_xcode_lproj_dirs(projbase_dir, conf) &&
         create_ios_xcode_icon_files(appicon_assets_dir, conf) &&
         copy_text_file(appicon_contents_src_path, appicon_contents_dest_path, NULL) &&
-        copy_text_file(entitlements_src_path, entitlements_dest_path, NULL) &&
         copy_ios_launchscreen_storyboard(projbase_dir, conf) &&
         copy_ios_xcode_bin_file(projbase_dir, conf, "amulet.a") &&
         copy_ios_xcode_bin_file(projbase_dir, conf, "glslopt.a") &&
@@ -685,8 +808,220 @@ static bool gen_ios_xcode_proj(export_config *conf) {
     free(appicon_assets_dir);
     free(appicon_contents_src_path);
     free(appicon_contents_dest_path);
-    free(entitlements_src_path);
-    free(entitlements_dest_path);
+    return ok;
+}
+
+const char *get_android_orientation_str(export_config *conf) {
+    switch (conf->orientation) {
+        case AM_DISPLAY_ORIENTATION_ANY:
+            return "fullUser";
+        case AM_DISPLAY_ORIENTATION_PORTRAIT:
+            return "portrait";
+        case AM_DISPLAY_ORIENTATION_LANDSCAPE:
+            return "landscape";
+        case AM_DISPLAY_ORIENTATION_HYBRID:
+            return "portrait";
+    }
+    return "portrait";
+}
+
+static bool copy_android_project_iml(export_config *conf, char *dir) {
+    char *template_dir = get_template_path(conf);
+    if (template_dir == NULL) return false;
+    char *src_path = am_format("%sandroid/Project.iml", template_dir);
+    char *dest_path = am_format("%s/%s.iml", dir, conf->shortname);
+    const char *subs[] = {
+        "AM_SHORTNAME", conf->shortname,
+        NULL
+    };
+    bool ok = copy_text_file(src_path, dest_path, (char**)subs);
+    free(template_dir);
+    free(src_path);
+    free(dest_path);
+    return ok;
+}
+
+static bool copy_android_app_build_gradle(export_config *conf, char *dir) {
+    char *template_dir = get_template_path(conf);
+    if (template_dir == NULL) return false;
+    char *src_path = am_format("%sandroid/app/build.gradle", template_dir);
+    char *dest_path = am_format("%s/build.gradle", dir);
+    const char *billing_dep = "";
+    if (am_conf_android_needs_billing_permission) {
+        billing_dep = "implementation 'com.android.billingclient:billing:2.1.0'";
+    }
+    const char *subs[] = {
+        "AM_APPID", am_conf_app_id_android,
+        "AM_APPVERSION_CODE", am_conf_android_app_version_code,
+        "AM_TARGET_SDK_VER", am_conf_android_target_sdk_version,
+        "AM_APPVERSION", conf->version,
+        "AM_BILLING_DEPENDENCY", billing_dep,
+        NULL
+    };
+    bool ok = copy_text_file(src_path, dest_path, (char**)subs);
+    free(template_dir);
+    free(src_path);
+    free(dest_path);
+    return ok;
+}
+
+static bool copy_android_manifest(export_config *conf, char *dir) {
+    char *template_dir = get_template_path(conf);
+    if (template_dir == NULL) return false;
+    char *src_path = am_format("%sandroid/app/src/main/AndroidManifest.xml", template_dir);
+    char *dest_path = am_format("%s/AndroidManifest.xml", dir);
+    const char *subs[] = {
+        "AM_APPID", am_conf_app_id_android,
+        "AM_APPVERSION_CODE", am_conf_android_app_version_code,
+        "AM_APPVERSION", conf->version,
+        "AM_TITLE", conf->display_name,
+        "AM_ORIENTATION", get_android_orientation_str(conf),
+        "AM_INTERNET_PERMISSION", am_conf_android_needs_internet_permission ? "<uses-permission android:name=\"android.permission.INTERNET\"/>" : "",
+        "AM_BILLING_PERMISSION", am_conf_android_needs_billing_permission ? "<uses-permission android:name=\"com.android.vending.BILLING\" />" : "",
+        NULL
+    };
+    bool ok = copy_text_file(src_path, dest_path, (char**)subs);
+    free(template_dir);
+    free(src_path);
+    free(dest_path);
+    return ok;
+}
+
+static bool copy_android_strings_xml(export_config *conf, char *dir) {
+    char *template_dir = get_template_path(conf);
+    if (template_dir == NULL) return false;
+    char *src_path = am_format("%sandroid/app/src/main/res/values/strings.xml", template_dir);
+    char *dest_path = am_format("%s/strings.xml", dir);
+    const char *subs[] = {
+        "AM_GOOGLE_PLAY_GAME_SERVICES_ID", am_conf_google_play_services_id,
+        NULL
+    };
+    bool ok = copy_text_file(src_path, dest_path, (char**)subs);
+    free(template_dir);
+    free(src_path);
+    free(dest_path);
+    return ok;
+}
+
+static bool gen_android_studio_proj(export_config *conf) {
+    if (am_conf_app_icon_android == NULL) {
+        fprintf(stderr, "Error: please set android_icon or icon in conf.lua\n");
+        return false;
+    }
+    if (am_conf_app_id_android == NULL) {
+        fprintf(stderr, "Error: please set appid_android or appid in conf.lua\n");
+        return false;
+    }
+    char *templates_dir = get_template_path(conf);
+    if (templates_dir == NULL) return false;
+    char *projbase_dir;
+    if (conf->outpath) {
+        projbase_dir = am_format("%s", conf->outpath);
+    } else {
+        projbase_dir = am_format("%s%s-%s-android", conf->outdir, conf->shortname, conf->version);
+    }
+    char *app_dir = am_format("%s/app", projbase_dir);
+    char *src_dir = am_format("%s/app/src", projbase_dir);
+    char *main_dir = am_format("%s/app/src/main", projbase_dir);
+    char *res_dir = am_format("%s/app/src/main/res", projbase_dir);
+    char *values_dir = am_format("%s/app/src/main/res/values", projbase_dir);
+    char *java_dir = am_format("%s/app/src/main/java", projbase_dir);
+    char *java_xyz_dir = am_format("%s/app/src/main/java/xyz", projbase_dir);
+    char *java_xyz_amulet_dir = am_format("%s/app/src/main/java/xyz/amulet", projbase_dir);
+    char *assets_dir = am_format("%s/app/src/main/assets", projbase_dir);
+    char *jnilibs_dir = am_format("%s/app/src/main/jniLibs", projbase_dir);
+    char *jnilibs_arm32_dir = am_format("%s/app/src/main/jniLibs/armeabi-v7a", projbase_dir);
+    char *jnilibs_arm64_dir = am_format("%s/app/src/main/jniLibs/arm64-v8a", projbase_dir);
+    char *jnilibs_x86_dir = am_format("%s/app/src/main/jniLibs/x86", projbase_dir);
+    char *jnilibs_x86_64_dir = am_format("%s/app/src/main/jniLibs/x86_64", projbase_dir);
+
+    char *proguard_rules_src_path = am_format("%sandroid/app/proguard-rules.pro", templates_dir);
+    char *proguard_rules_dst_path = am_format("%s/app/proguard-rules.pro", projbase_dir);
+    char *activity_java_src_path = am_format("%sandroid/app/src/main/java/xyz/amulet/AmuletActivity.java", templates_dir);
+    char *activity_java_dst_path = am_format("%s/app/src/main/java/xyz/amulet/AmuletActivity.java", projbase_dir);
+    char *app_iml_src_path = am_format("%sandroid/app.iml", templates_dir);
+    char *app_iml_dst_path = am_format("%s/app.iml", projbase_dir);
+    char *build_gradle_src_path = am_format("%sandroid/build.gradle", templates_dir);
+    char *build_gradle_dst_path = am_format("%s/build.gradle", projbase_dir);
+    char *gradle_properties_src_path = am_format("%sandroid/gradle.properties", templates_dir);
+    char *gradle_properties_dst_path = am_format("%s/gradle.properties", projbase_dir);
+    char *settings_gradle_src_path = am_format("%sandroid/settings.gradle", templates_dir);
+    char *settings_gradle_dst_path = am_format("%s/settings.gradle", projbase_dir);
+
+    const char *activity_billing_subs[] = {
+        "//BILLING", "",
+        NULL
+    };
+
+    char **activity_subs = am_conf_android_needs_billing_permission ? (char**)activity_billing_subs : NULL;
+
+    am_make_dir(projbase_dir);
+    am_make_dir(app_dir);
+    am_make_dir(src_dir);
+    am_make_dir(main_dir);
+    am_make_dir(res_dir);
+    am_make_dir(values_dir);
+    am_make_dir(java_dir);
+    am_make_dir(java_xyz_dir);
+    am_make_dir(java_xyz_amulet_dir);
+    am_make_dir(assets_dir);
+    am_make_dir(jnilibs_dir);
+    am_make_dir(jnilibs_arm32_dir);
+    am_make_dir(jnilibs_arm64_dir);
+    am_make_dir(jnilibs_x86_dir);
+    am_make_dir(jnilibs_x86_64_dir);
+
+    bool ok =
+        copy_android_project_iml(conf, projbase_dir) &&
+        copy_android_app_build_gradle(conf, app_dir) &&
+        copy_android_manifest(conf, main_dir) &&
+        copy_android_strings_xml(conf, values_dir) &&
+        create_android_proj_lang_dirs(projbase_dir, conf) &&
+        create_android_proj_icon_files(res_dir, conf) &&
+        copy_text_file(proguard_rules_src_path, proguard_rules_dst_path, NULL) &&
+        copy_text_file(activity_java_src_path, activity_java_dst_path, activity_subs) &&
+        copy_text_file(app_iml_src_path, app_iml_dst_path, NULL) &&
+        copy_text_file(build_gradle_src_path, build_gradle_dst_path, NULL) &&
+        copy_text_file(gradle_properties_src_path, gradle_properties_dst_path, NULL) &&
+        copy_text_file(settings_gradle_src_path, settings_gradle_dst_path, NULL) &&
+        copy_platform_bin_file(jnilibs_arm32_dir, conf, "libamulet.so", "android_arm32") &&
+        copy_platform_bin_file(jnilibs_arm64_dir, conf, "libamulet.so", "android_arm64") &&
+        copy_platform_bin_file(jnilibs_x86_dir, conf, "libamulet.so", "android_x86") &&
+        copy_platform_bin_file(jnilibs_x86_64_dir, conf, "libamulet.so", "android_x86_64") &&
+        copy_data_files(conf, assets_dir) &&
+        true;
+    if (ok) printf("Generated %s\n", projbase_dir);
+
+    free(templates_dir);
+    free(projbase_dir);
+    free(app_dir);
+    free(src_dir);
+    free(main_dir);
+    free(res_dir);
+    free(values_dir);
+    free(java_dir);
+    free(java_xyz_dir);
+    free(java_xyz_amulet_dir);
+    free(assets_dir);
+    free(jnilibs_dir);
+    free(jnilibs_arm32_dir);
+    free(jnilibs_arm64_dir);
+    free(jnilibs_x86_dir);
+    free(jnilibs_x86_64_dir);
+
+    free(proguard_rules_src_path);
+    free(proguard_rules_dst_path);
+    free(activity_java_src_path);
+    free(activity_java_dst_path);
+    free(app_iml_src_path);
+    free(app_iml_dst_path);
+    free(build_gradle_src_path);
+    free(build_gradle_dst_path);
+    free(gradle_properties_src_path);
+    free(gradle_properties_dst_path);
+    free(settings_gradle_src_path);
+    free(settings_gradle_dst_path);
+
     return ok;
 }
 
@@ -793,7 +1128,7 @@ bool am_build_exports(am_export_flags *flags) {
     conf.orientation = am_conf_app_display_orientation;
     conf.launch_image = am_conf_app_launch_image;
     conf.launch_image_id = (unsigned int)time(NULL);
-    conf.grade = "release";
+    conf.grade = flags->debug ? "debug" : "release";
     conf.pakfile = AM_TMP_DIR AM_PATH_SEP_STR "data.pak";
     conf.mac_category = am_conf_mac_category;
     conf.recurse = flags->recurse;
@@ -810,13 +1145,15 @@ bool am_build_exports(am_export_flags *flags) {
     conf.outpath = flags->outpath;
     if (!build_data_pak(&conf)) return false;
     bool ok =
-        ((!(flags->export_windows))        || gen_windows_export(&conf)) &&
-        ((!(flags->export_mac))            || gen_mac_export(&conf, true)) &&
-        ((!(flags->export_mac_app_store))  || gen_mac_app_store_export(&conf)) &&
-        ((!(flags->export_ios_xcode_proj)) || gen_ios_xcode_proj(&conf)) &&
-        ((!(flags->export_linux))          || gen_linux_export(&conf)) &&
-        ((!(flags->export_html))           || gen_html_export(&conf)) &&
-        ((!(flags->export_data_pak))       || gen_data_pak_export(&conf)) &&
+        ((!(flags->export_windows))             || gen_windows_export(&conf, "windows", "msvc32")) &&
+        ((!(flags->export_windows64))           || gen_windows_export(&conf, "windows64", "msvc64")) &&
+        ((!(flags->export_mac))                 || gen_mac_export(&conf, true)) &&
+        ((!(flags->export_mac_app_store))       || gen_mac_app_store_export(&conf)) &&
+        ((!(flags->export_ios_xcode_proj))      || gen_ios_xcode_proj(&conf)) &&
+        ((!(flags->export_android_studio_proj)) || gen_android_studio_proj(&conf)) &&
+        ((!(flags->export_linux))               || gen_linux_export(&conf)) &&
+        ((!(flags->export_html))                || gen_html_export(&conf)) &&
+        ((!(flags->export_data_pak))            || gen_data_pak_export(&conf)) &&
         true;
     am_delete_file(conf.pakfile);
     am_delete_empty_dir(AM_TMP_DIR);
@@ -828,7 +1165,7 @@ bool am_build_exports(am_export_flags *flags) {
 static bool create_mac_info_plist(const char *binpath, const char *filename, export_config *conf) {
     FILE *f = am_fopen(filename, "w");
     if (f == NULL) {
-        fprintf(stderr, "Error: unable to create file %s", filename);
+        fprintf(stderr, "Error: unable to create file %s\n", filename);
         return false;
     }
     char *template_filename = am_format("%s%c%s", binpath, AM_PATH_SEP, "Info.plist.tmpl");
@@ -929,6 +1266,45 @@ static char* get_ios_xcodeproj_lang_list(export_config *conf) {
         while (*ptr == ',' || *ptr == ' ') ptr++;
     }
     return res;
+}
+
+static char *get_android_lang_code(char *lang) {
+    if (strcmp(lang, "zh-Hant") == 0) return am_format("%s", "zh-rTW");
+    if (strcmp(lang, "zh-Hans") == 0) return am_format("%s", "zh-rCN");
+    char *dash = strchr(lang, '-');
+    if (dash == NULL) return am_format("%s", lang);
+    char *part1 = lang;
+    char *part2 = dash + 1;
+    *dash = 0;
+    char *code = am_format("%s-r%s", part1, part2);
+    *dash = '-';
+    return code;
+}
+
+static bool create_android_proj_lang_dirs(const char *dir, export_config *conf) {
+    const char *ptr = conf->supported_languages;
+    char lang[100];
+    while (*ptr == ' ') ptr++;
+    while (*ptr != 0) {
+        int i = 0;
+        while (*ptr != 0 && *ptr != ',') {
+            if (i >= 100) {
+                fprintf(stderr, "conf.lua: language id too long\n");
+                return false;
+            }
+            lang[i] = *ptr;
+            i++;
+            ptr++;
+        }
+        lang[i] = 0;
+        char *android_lang = get_android_lang_code(lang);
+        char *ldir = am_format("%s/values-%s", dir, android_lang);
+        am_make_dir(ldir);
+        free(ldir);
+        free(android_lang);
+        while (*ptr == ',' || *ptr == ' ') ptr++;
+    }
+    return true;
 }
 
 static char* get_ios_launchscreen_entries(export_config *conf) {
@@ -1036,16 +1412,15 @@ static bool create_ios_xcode_icon_files(const char *dir, export_config *conf) {
     stbi_uc *img_data;
     int width, height;
     char *filename = (char*)am_conf_app_icon_ios;
-    if (filename == NULL) filename = get_default_ios_launch_image_filename(conf);
     if (filename == NULL) return false;
-    void *data = am_read_file(am_conf_app_icon_ios, &len);
+    void *data = am_read_file(filename, &len);
     int components = 4;
     stbi_set_flip_vertically_on_load(0);
     img_data =
         stbi_load_from_memory((stbi_uc const *)data, len, &width, &height, &components, 4);
     free(data);
     if (img_data == NULL) return false;
-    if (!resize_image(img_data, width, height, dir, "iTunesArtwork.png", 1024, 1024)
+    bool error = (!resize_image(img_data, width, height, dir, "iTunesArtwork.png", 1024, 1024)
         || !resize_image(img_data, width, height, dir, "icon120.png", 120, 120)
         || !resize_image(img_data, width, height, dir, "icon152.png", 152, 152)
         || !resize_image(img_data, width, height, dir, "icon167.png", 167, 167)
@@ -1058,16 +1433,113 @@ static bool create_ios_xcode_icon_files(const char *dir, export_config *conf) {
         || !resize_image(img_data, width, height, dir, "icon76.png", 76, 76)
         || !resize_image(img_data, width, height, dir, "icon80.png", 80, 80)
         || !resize_image(img_data, width, height, dir, "icon87.png", 87, 87)
-        ) return false;
+        );
     free(img_data);
-    return true;
+    return !error;
+}
+
+static bool create_android_proj_icon_files(const char *dir, export_config *conf) {
+    size_t len;
+    stbi_uc *img_data;
+    int width, height;
+    int width_fg, height_fg;
+    int width_bg, height_bg;
+    char *filename = (char*)am_conf_app_icon_android;
+    if (filename == NULL) return false;
+    void *data = am_read_file(filename, &len);
+    if (data == NULL) return false;
+    int components = 4;
+    stbi_set_flip_vertically_on_load(0);
+    img_data =
+        stbi_load_from_memory((stbi_uc const *)data, len, &width, &height, &components, 4);
+    free(data);
+    if (img_data == NULL) return false;
+
+    stbi_uc *fg_img_data = NULL;
+    if (am_conf_android_adaptive_icon_fg != NULL) {
+        data = am_read_file(am_conf_android_adaptive_icon_fg, &len);
+        if (data == NULL) return false;
+        int components = 4;
+        stbi_set_flip_vertically_on_load(0);
+        fg_img_data =
+            stbi_load_from_memory((stbi_uc const *)data, len, &width_fg, &height_fg, &components, 4);
+        free(data);
+        if (fg_img_data == NULL) return false; // memory leak, but it doesn't matter
+    }
+    stbi_uc *bg_img_data = NULL;
+    if (am_conf_android_adaptive_icon_bg != NULL) {
+        data = am_read_file(am_conf_android_adaptive_icon_bg, &len);
+        if (data == NULL) return false;
+        int components = 4;
+        stbi_set_flip_vertically_on_load(0);
+        bg_img_data =
+            stbi_load_from_memory((stbi_uc const *)data, len, &width_bg, &height_bg, &components, 4);
+        free(data);
+        if (bg_img_data == NULL) return false;  // memory leak, but it doesn't matter
+    }
+
+    char *templates_dir = get_template_path(conf);
+    if (templates_dir == NULL) return false;
+    char *mdpi_dir = am_format("%s/mipmap-mdpi", dir);
+    char *hdpi_dir = am_format("%s/mipmap-hdpi", dir);
+    char *xhdpi_dir = am_format("%s/mipmap-xhdpi", dir);
+    char *xxhdpi_dir = am_format("%s/mipmap-xxhdpi", dir);
+    char *xxxhdpi_dir = am_format("%s/mipmap-xxxhdpi", dir);
+    char *anydpi_dir = am_format("%s/mipmap-anydpi-v26", dir);
+    char *ic_launcher_xml_src = am_format("%sandroid/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml", templates_dir);
+    char *ic_launcher_xml_dst = am_format("%s/mipmap-anydpi-v26/ic_launcher.xml", dir);
+    am_make_dir(mdpi_dir);
+    am_make_dir(hdpi_dir);
+    am_make_dir(xhdpi_dir);
+    am_make_dir(xxhdpi_dir);
+    am_make_dir(xxxhdpi_dir);
+    am_make_dir(anydpi_dir);
+
+    bool error = (
+           !resize_image(img_data, width, height, mdpi_dir, "ic_launcher.png", 48, 48)
+        || !resize_image(img_data, width, height, hdpi_dir, "ic_launcher.png", 72, 72)
+        || !resize_image(img_data, width, height, xhdpi_dir, "ic_launcher.png", 96, 96)
+        || !resize_image(img_data, width, height, xxhdpi_dir, "ic_launcher.png", 144, 144)
+        || !resize_image(img_data, width, height, xxxhdpi_dir, "ic_launcher.png", 192, 192)
+        );
+
+    if (!error && fg_img_data != NULL && bg_img_data != NULL) {
+        error = (
+           !resize_image(fg_img_data, width_fg, height_fg, mdpi_dir, "ic_launcher_foreground.png", 108, 108)
+        || !resize_image(fg_img_data, width_fg, height_fg, hdpi_dir, "ic_launcher_foreground.png", 162, 162)
+        || !resize_image(fg_img_data, width_fg, height_fg, xhdpi_dir, "ic_launcher_foreground.png", 216, 216)
+        || !resize_image(fg_img_data, width_fg, height_fg, xxhdpi_dir, "ic_launcher_foreground.png", 324, 324)
+        || !resize_image(fg_img_data, width_fg, height_fg, xxxhdpi_dir, "ic_launcher_foreground.png", 432, 432)
+        || !resize_image(bg_img_data, width_bg, height_bg, mdpi_dir, "ic_launcher_background.png", 108, 108)
+        || !resize_image(bg_img_data, width_bg, height_bg, hdpi_dir, "ic_launcher_background.png", 162, 162)
+        || !resize_image(bg_img_data, width_bg, height_bg, xhdpi_dir, "ic_launcher_background.png", 216, 216)
+        || !resize_image(bg_img_data, width_bg, height_bg, xxhdpi_dir, "ic_launcher_background.png", 324, 324)
+        || !resize_image(bg_img_data, width_bg, height_bg, xxxhdpi_dir, "ic_launcher_background.png", 432, 432)
+        || !copy_text_file(ic_launcher_xml_src, ic_launcher_xml_dst, NULL)
+        );
+    }
+
+    free(img_data);
+    if (fg_img_data != NULL) free(fg_img_data);
+    if (bg_img_data != NULL) free(bg_img_data);
+    free(templates_dir);
+    free(mdpi_dir);
+    free(hdpi_dir);
+    free(xhdpi_dir);
+    free(xxhdpi_dir);
+    free(xxxhdpi_dir);
+    free(anydpi_dir);
+    free(ic_launcher_xml_src);
+    free(ic_launcher_xml_dst);
+
+    return !error;
 }
 
 static bool create_mac_entitlements(export_config *conf) {
     char *filename = am_format("%s/%s.entitlements", AM_TMP_DIR, conf->shortname);
     FILE *f = am_fopen(filename, "w");
     if (f == NULL) {
-        fprintf(stderr, "Error: unable to create file %s", filename);
+        fprintf(stderr, "Error: unable to create file %s\n", filename);
         free(filename);
         return false;
     }

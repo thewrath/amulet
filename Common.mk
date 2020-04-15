@@ -3,7 +3,7 @@ SELF_DIR := $(dir $(lastword $(MAKEFILE_LIST)))
 SPACE1=
 SPACE=$(SPACE1) $(SPACE1)
 
-TARGET_PLATFORMS = linux32 linux64 msvc32 msvc64 osx ios android html mingw32 mingw64
+TARGET_PLATFORMS = linux32;linux64;msvc32;msvc64;osx;ios;android_arm32;android_arm64;android_x86;android_x86_64;html;mingw32;mingw64;
 
 # Directories
 
@@ -70,6 +70,16 @@ else
   TARGET = $(TARGET_PLATFORM).$(GRADE)
 endif
 
+ifeq (,$(findstring $(TARGET_PLATFORM);,$(TARGET_PLATFORMS)))
+  $(error unrecognised target platform: $(TARGET_PLATFORM))
+endif
+
+ifneq (debug,$(GRADE))
+  ifneq (release,$(GRADE))
+    $(error unrecognised target grade: $(GRADE))
+  endif
+endif
+
 ifndef LUAVM
   LUAVM = lua51
 endif
@@ -112,12 +122,17 @@ DEF_OPT = -D
 INCLUDE_OPT = -I
 CC = gcc
 HOSTCC = gcc
+HOSTCPP = g++
 CPP = g++
 LINK = g++
 AR = ar
 AR_OPTS = rcus
 AR_OUT_OPT =
-XCFLAGS = -Wall -Werror -pthread -fno-strict-aliasing
+XCFLAGS = -pthread
+ifdef STRICT
+  XCFLAGS += -Wall -Werror
+endif
+NO_STRICT_ALIAS_OPT = -fno-strict-aliasing
 XLDFLAGS = -ldl -lm -lrt -pthread
 LUA_CFLAGS = -DLUA_COMPAT_ALL
 LUAJIT_FLAGS =
@@ -128,7 +143,7 @@ C99_OPT = -std=c99
 
 EMSCRIPTEN_LIBS = html/library_sdl.js
 EMSCRIPTEN_LIBS_OPTS = $(patsubst %,--js-library %,$(EMSCRIPTEN_LIBS))
-EMSCRIPTEN_EXPORTS_OPT = -s EXPORTED_FUNCTIONS="['_main', '_am_emscripten_run', '_am_emscripten_run_waiting', '_am_emscripten_pause', '_am_emscripten_resume', '_am_emscripten_resize']" -s EXTRA_EXPORTED_RUNTIME_METHODS="['Pointer_stringify', 'ccall', 'writeStringToMemory']" -s BINARYEN_TRAP_MODE=clamp
+EMSCRIPTEN_EXPORTS_OPT = -s EXPORTED_FUNCTIONS="['_main', '_am_emscripten_run', '_am_emscripten_run_waiting', '_am_emscripten_pause', '_am_emscripten_resume', '_am_emscripten_resize']" -s EXTRA_EXPORTED_RUNTIME_METHODS="['UTF8ToString', 'ccall', 'stringToUTF8', 'lengthBytesUTF8']" -s BINARYEN_TRAP_MODE=clamp
 
 TARGET_CFLAGS=-ffast-math
 
@@ -221,25 +236,76 @@ else ifeq ($(TARGET_PLATFORM),ios)
 	     $(IOS_GRAPHICS_LINK_OPT) -Wl,-framework,GameKit $(GOOGLE_ADS_FRAMEWORK_OPT)
   LUA_CFLAGS += -DLUA_USE_POSIX -DIPHONEOS
   IOS = 1
-else ifeq ($(TARGET_PLATFORM),android)
-  NDK_VER=$(NDK_HOME)/toolchains/arm-linux-androideabi-4.9
-  NDK_SYSROOT=$(NDK_HOME)/platforms/android-$(NDK_ANDROID_VER)/arch-arm
+else ifeq ($(TARGET_PLATFORM),android_arm32)
+  # useful documentation: https://android.googlesource.com/platform/ndk/+/ndk-release-r20/docs/BuildSystemMaintainers.md
+  NDK_ANDROID_VER=23
+  NDK_VER=$(NDK_HOME)/toolchains/llvm
   CC = $(NDK_HOME)/toolchains/llvm/prebuilt/$(NDK_HOST)/bin/clang
   CPP = $(NDK_HOME)/toolchains/llvm/prebuilt/$(NDK_HOST)/bin/clang++
   LINK = $(CPP)
   AR= $(NDK_VER)/prebuilt/$(NDK_HOST)/bin/arm-linux-androideabi-ar
-  TARGET_CFLAGS += --sysroot $(NDK_SYSROOT) -gcc-toolchain $(NDK_VER)/prebuilt/$(NDK_HOST) -fpic \
-  	-target armv7-none-linux-androideabi -march=armv7-a -mfloat-abi=softfp -mfpu=vfpv3-d16 -fno-exceptions -fno-rtti \
+  TARGET_CFLAGS += -fPIC \
+  	-target armv7a-linux-androideabi$(NDK_ANDROID_VER) -fno-exceptions -fno-rtti \
 	-I$(NDK_HOME)/sources/android/native_app_glue \
-	-I$(NDK_HOME)/sources/cxx-stl/gnu-libstdc++/4.9/include \
-	-I$(NDK_HOME)/sources/cxx-stl/gnu-libstdc++/4.9/libs/armeabi-v7a/include \
-	-I$(NDK_HOME)/sources/cxx-stl/gnu-libstdc++/4.9/include/backward \
-	-I$(NDK_SYSROOT)usr/include \
 	-DANDROID
   XLDFLAGS = $(TARGET_CFLAGS) -Wl,-soname,libamulet.so -shared \
- 	$(NDK_HOME)/sources/cxx-stl/gnu-libstdc++/4.9/libs/armeabi-v7a/libgnustl_static.a -lgcc \
-	-no-canonical-prefixes -Wl,--fix-cortex-a8 \
-	-L$(NDK_SYSROOT)/usr/lib -llog -landroid -lEGL -lGLESv2 -lOpenSLES -llog -lc -lm 
+  	-static-libstdc++ \
+	-no-canonical-prefixes \
+	-llog -landroid -lEGL -lGLESv2 -llog -lc -lm 
+  LUA_CFLAGS += -DLUA_USE_POSIX
+  ANDROID = 1
+else ifeq ($(TARGET_PLATFORM),android_arm64)
+  # useful documentation: https://android.googlesource.com/platform/ndk/+/ndk-release-r20/docs/BuildSystemMaintainers.md
+  NDK_ANDROID_VER=23
+  NDK_VER=$(NDK_HOME)/toolchains/llvm
+  CC = $(NDK_HOME)/toolchains/llvm/prebuilt/$(NDK_HOST)/bin/clang
+  CPP = $(NDK_HOME)/toolchains/llvm/prebuilt/$(NDK_HOST)/bin/clang++
+  LINK = $(CPP)
+  AR= $(NDK_VER)/prebuilt/$(NDK_HOST)/bin/aarch64-linux-android-ar
+  TARGET_CFLAGS += -fPIC \
+  	-target aarch64-linux-android$(NDK_ANDROID_VER) -fno-exceptions -fno-rtti \
+	-I$(NDK_HOME)/sources/android/native_app_glue \
+	-DANDROID
+  XLDFLAGS = $(TARGET_CFLAGS) -Wl,-soname,libamulet.so -shared \
+  	-static-libstdc++ \
+	-no-canonical-prefixes \
+	-llog -landroid -lEGL -lGLESv2 -llog -lc -lm 
+  LUA_CFLAGS += -DLUA_USE_POSIX
+  ANDROID = 1
+else ifeq ($(TARGET_PLATFORM),android_x86)
+  # useful documentation: https://android.googlesource.com/platform/ndk/+/ndk-release-r20/docs/BuildSystemMaintainers.md
+  NDK_ANDROID_VER=23
+  NDK_VER=$(NDK_HOME)/toolchains/llvm
+  CC = $(NDK_HOME)/toolchains/llvm/prebuilt/$(NDK_HOST)/bin/clang
+  CPP = $(NDK_HOME)/toolchains/llvm/prebuilt/$(NDK_HOST)/bin/clang++
+  LINK = $(CPP)
+  AR= $(NDK_VER)/prebuilt/$(NDK_HOST)/bin/i686-linux-android-ar 
+  TARGET_CFLAGS += -fPIC \
+  	-target i686-linux-android$(NDK_ANDROID_VER) -fno-exceptions -fno-rtti \
+	-I$(NDK_HOME)/sources/android/native_app_glue \
+	-DANDROID
+  XLDFLAGS = $(TARGET_CFLAGS) -Wl,-soname,libamulet.so -shared \
+  	-static-libstdc++ \
+	-no-canonical-prefixes \
+	-llog -landroid -lEGL -lGLESv2 -llog -lc -lm 
+  LUA_CFLAGS += -DLUA_USE_POSIX
+  ANDROID = 1
+else ifeq ($(TARGET_PLATFORM),android_x86_64)
+  # useful documentation: https://android.googlesource.com/platform/ndk/+/ndk-release-r20/docs/BuildSystemMaintainers.md
+  NDK_ANDROID_VER=23
+  NDK_VER=$(NDK_HOME)/toolchains/llvm
+  CC = $(NDK_HOME)/toolchains/llvm/prebuilt/$(NDK_HOST)/bin/clang
+  CPP = $(NDK_HOME)/toolchains/llvm/prebuilt/$(NDK_HOST)/bin/clang++
+  LINK = $(CPP)
+  AR= $(NDK_VER)/prebuilt/$(NDK_HOST)/bin/x86_64-linux-android-ar 
+  TARGET_CFLAGS += -fPIC \
+  	-target x86_64-linux-android$(NDK_ANDROID_VER) -fno-exceptions -fno-rtti \
+	-I$(NDK_HOME)/sources/android/native_app_glue \
+	-DANDROID
+  XLDFLAGS = $(TARGET_CFLAGS) -Wl,-soname,libamulet.so -shared \
+  	-static-libstdc++ \
+	-no-canonical-prefixes \
+	-llog -landroid -lEGL -lGLESv2 -llog -lc -lm 
   LUA_CFLAGS += -DLUA_USE_POSIX
   ANDROID = 1
 else ifeq ($(TARGET_PLATFORM),html)
@@ -259,6 +325,7 @@ else ifeq ($(TARGET_PLATFORM),html)
     LINK = cmd //C em++.bat
   endif
 else ifeq ($(TARGET_PLATFORM),msvc32)
+  NO_STRICT_ALIAS_OPT = 
   VC_CL = cl.exe
   VC_CL_PATH = $(shell which $(VC_CL))
   VC_CL_DIR = $(shell dirname "$(VC_CL_PATH)")
@@ -287,6 +354,7 @@ else ifeq ($(TARGET_PLATFORM),msvc32)
   C99_OPT =
   ANGLE_WIN_PREBUILT_DIR = $(THIRD_PARTY_DIR)/angle-win-prebuilt/32
 else ifeq ($(TARGET_PLATFORM),msvc64)
+  NO_STRICT_ALIAS_OPT = 
   VC_CL = cl.exe
   VC_CL_PATH = $(shell which $(VC_CL))
   VC_CL_DIR = $(shell dirname "$(VC_CL_PATH)")
@@ -321,7 +389,7 @@ else ifeq ($(TARGET_PLATFORM),mingw32)
   LINK = $(CPP)
   AR = i686-w64-mingw32-ar
   XLDFLAGS = -static $(BUILD_LIB_DIR)/SDL2.lib 
-  XCFLAGS = -Wall -Werror -fno-strict-aliasing
+  XCFLAGS += -fno-strict-aliasing
   LUAJIT_FLAGS += HOST_CC="gcc -m32" CROSS=i686-w64-mingw32- TARGET_SYS=Windows
   WINDOWS = 1
   MINGW = 1
@@ -336,7 +404,7 @@ else ifeq ($(TARGET_PLATFORM),mingw64)
   LINK = $(CPP)
   AR = x86_64-w64-mingw32-ar
   XLDFLAGS = -static $(BUILD_LIB_DIR)/SDL2.lib
-  XCFLAGS = -Wall -Werror -fno-strict-aliasing
+  XCFLAGS += -fno-strict-aliasing
   LUAJIT_FLAGS += HOST_CC="gcc -m64" CROSS=x86_64-w64-mingw32- TARGET_SYS=Windows
   WINDOWS = 1
   MINGW = 1
